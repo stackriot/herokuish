@@ -1,38 +1,41 @@
-ARG STACK_VERSION=18
-FROM heroku/heroku:$STACK_VERSION-build
-ARG STACK_VERSION
+# syntax=docker/dockerfile:1
+ARG STACK_VERSION=24
+
+FROM golang:1.27 AS builder
+RUN mkdir /src
+COPY . /src/
+WORKDIR /src
+
+ARG VERSION
+RUN go build -a -ldflags "-X main.Version=$VERSION" -o herokuish .
+
+FROM heroku/heroku:${STACK_VERSION}-build AS base
+ARG STACK_VERSION=24
+ARG TARGETARCH
 
 ENV STACK=heroku-$STACK_VERSION
-ENV DEBIAN_FRONTEND noninteractive
+ENV DEBIAN_FRONTEND=noninteractive
 LABEL com.gliderlabs.herokuish/stack=$STACK
 
-RUN apt-get update -qq \
- && apt-get install -qq -y daemontools \
- && cp /etc/ImageMagick-6/policy.xml /etc/ImageMagick-6/policy.xml.custom \
- && apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confnew \
-    --allow-downgrades \
-    --allow-remove-essential \
-    --allow-change-held-packages \
-    dist-upgrade \
- && mv /etc/ImageMagick-6/policy.xml.custom /etc/ImageMagick-6/policy.xml \
- && apt-get clean \
- && rm -rf /var/cache/apt/archives/* /var/lib/apt/lists/* /var/tmp/*
-RUN curl "https://github.com/gliderlabs/herokuish/releases/download/v0.5.31/herokuish_0.5.31_linux_x86_64.tgz" \
-    --silent -L | tar -xzC /bin
-RUN /bin/herokuish buildpack install \
+USER root
+# for setuidgid (daemontools) and optional /dev/random seeding (rng-tools5)
+COPY bin/apt-install /usr/local/bin/apt-install
+COPY --from=builder /src/herokuish /bin/
+
+RUN apt-install daemontools rng-tools5 && \
+    /bin/herokuish buildpack install \
     && ln -s /bin/herokuish /build \
     && ln -s /bin/herokuish /start \
     && ln -s /bin/herokuish /exec \
     && cd /tmp/buildpacks \
     && rm -rf \
-            */.git \
-            */.github \
-            */.circleci \
-            */changelogs \
-            */spec \
-            */support/build \
-            */builds \
-            */test \
-            */tmp
+    */.git \
+    */.github \
+    */changelogs \
+    */spec \
+    */builds \
+    */test \
+    */tmp
 COPY include/default_user.bash /tmp/default_user.bash
 RUN bash /tmp/default_user.bash && rm -f /tmp/default_user.bash
+ENV BASH_BIN=/usr/bin/bash

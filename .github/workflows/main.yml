@@ -5,38 +5,44 @@ name: CI
 on:
   pull_request:
     branches:
-      - '*'
+      - "*"
   push:
     branches:
       - master
-      - 'release'
+
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
-    name: build
-    runs-on: ubuntu-18.04
+    name: build.${{ matrix.heroku }}-${{ matrix.buildx }}
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: true
-    env:
-      GITHUB_ACCESS_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
-      PACKAGECLOUD_TOKEN: ${{ secrets.PACKAGECLOUD_TOKEN }}
+      matrix:
+        buildx:
+          - "true"
+          - "false"
+        heroku:
+          - 24
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v2
+      - uses: actions/setup-go@v7
         with:
-          go-version: 1.12.0
+          go-version: 1.17.8
 
       - uses: ruby/setup-ruby@v1
         with:
-          ruby-version: 2.3
+          ruby-version: 3.3
 
-      - uses: actions/setup-python@v2
+      - uses: actions/setup-python@v7
         with:
-          python-version: '3.7.x'
+          python-version: "3.7.x"
 
       - name: setup env
         run: make ci-report
@@ -44,29 +50,51 @@ jobs:
       - name: shellcheck
         run: make shellcheck
 
-      - name: lint
-        run: make lint
-
       - name: install requirements
         run: make deps fpm package_cloud
 
+      - name: set up qemu
+        uses: docker/setup-qemu-action@v4
+
+      - name: set up docker buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: inspect builder
+        run: |
+          echo "Name:      ${{ steps.buildx.outputs.name }}"
+          echo "Endpoint:  ${{ steps.buildx.outputs.endpoint }}"
+          echo "Status:    ${{ steps.buildx.outputs.status }}"
+          echo "Flags:     ${{ steps.buildx.outputs.flags }}"
+          echo "Platforms: ${{ steps.buildx.outputs.platforms }}"
+
       - name: build
-        run: CIRCLECI=true make build
+        run: |
+          if [[ "${{ matrix.buildx }}" == "true" ]]; then
+            make build/docker/${{ matrix.heroku }} STACK_VERSION=${{ matrix.heroku }}
+          else
+            make build build/docker/${{ matrix.heroku }} BUILDX=false STACK_VERSION=${{ matrix.heroku }}
+          fi
+
+      - name: install bats
+        run: sudo apt-get update && sudo apt-get install -y bats
 
       - name: bash tests
-        run: basht tests/**/tests.sh
+        run: |
+          if [[ "${{ matrix.buildx }}" == "false" ]]; then
+            bats tests/*/tests.bats
+          fi
 
       - name: upload packages
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v7
         with:
-          name: build
+          name: build-${{ matrix.heroku }}-${{ matrix.buildx }}
           path: build
 
-
   unit-tests:
-    name: unit.${{ matrix.buildpack }}
+    name: unit.heroku-${{ matrix.heroku }}.${{ matrix.buildpack }}
     needs: build
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -79,55 +107,40 @@ jobs:
           - buildpack-nodejs
           - buildpack-null
           - buildpack-php
-          - buildpack-play
           - buildpack-python
           - buildpack-ruby
           - buildpack-scala
           - buildpack-static
-    steps:
-      - uses: actions/checkout@v2
+        heroku:
+          - 24
 
-      - uses: actions/setup-go@v2
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
         with:
-          go-version: 1.12.0
+          go-version: 1.17.8
 
       - name: download packages
-        uses: actions/download-artifact@v1
+        uses: actions/download-artifact@v8
         with:
-          name: build
+          name: build-${{ matrix.heroku }}-false
+          path: build
+
+      - name: validate packages
+        run: |
+          ls -lah build build/*
 
       - name: install requirements
         run: make deps
 
       - name: build docker images
-        run: make build/docker
+        run: make build/docker/${{ matrix.heroku }} BUILDX=false STACK_VERSION=${{ matrix.heroku }}
+
+      - name: install bats
+        run: sudo apt-get update && sudo apt-get install -y bats
 
       - name: run buildpack test
         run: |
           echo "executing ${{ matrix.buildpack }} tests"
-          basht buildpacks/${{ matrix.buildpack }}/tests/*/test.sh
-
-  release:
-    name: release
-    needs: unit-tests
-    runs-on: ubuntu-18.04
-
-    steps:
-      - uses: actions/checkout@v2
-
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: 2.3
-
-      - name: download packages
-        uses: actions/download-artifact@v1
-        with:
-          name: build
-
-      - name: release
-        run: |
-          if [[ "${GITHUB_REF#refs/heads/}" == "release" ]]; then
-            export CI_BRANCH=${GITHUB_REF#refs/heads/}
-            export PACKAGECLOUD_REPOSITORY=dokku/dokku
-            make release release-packagecloud
-          fi
+          bats buildpacks/${{ matrix.buildpack }}/tests/*/test.bats

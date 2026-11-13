@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+IMAGE=gliderlabs/herokuish
+
+main() {
+  declare TAG="$1"
+  declare OCI_TAR="${2:-build/oci/herokuish.tar}"
+  local OCI_DIR
+  OCI_DIR="$(dirname "$OCI_TAR")/oci-layout"
+
+  if [ -z "$TAG" ]; then
+    echo "Usage: $0 <tag> [oci-tarball-path]"
+    exit 1
+  fi
+
+  if [ ! -f "$OCI_TAR" ]; then
+    echo " !    OCI tarball not found at ${OCI_TAR}"
+    exit 1
+  fi
+
+  echo "====> Extracting OCI layout from ${OCI_TAR}"
+  rm -rf "$OCI_DIR"
+  mkdir -p "$OCI_DIR"
+  tar -xf "$OCI_TAR" -C "$OCI_DIR"
+  chmod -R u+w "$OCI_DIR"
+
+  echo "====> Stripping io.buildpacks.stack.id from local OCI layout"
+  regctl image mod "ocidir://${OCI_DIR}:${TAG}" --replace \
+    --label "io.buildpacks.stack.id="
+
+  echo "====> Pushing cleaned image to Docker Hub"
+  local tags=("${TAG}" "${TAG}-24" "latest" "latest-24")
+  for tag in "${tags[@]}"; do
+    echo "----> Pushing to ${IMAGE}:${tag}"
+    regctl image copy "ocidir://${OCI_DIR}:${TAG}" "${IMAGE}:${tag}"
+  done
+
+  verify_labels "$TAG"
+  echo " !    Done!"
+}
+
+verify_labels() {
+  declare TAG="$1"
+  local all_tags=("${TAG}" "${TAG}-24" "latest" "latest-24")
+  local platforms=("linux/amd64" "linux/arm64/v8")
+  local failed=0
+  local label
+
+  echo "====> Verifying io.buildpacks.stack.id is absent on all tags"
+  for tag in "${all_tags[@]}"; do
+    for platform in "${platforms[@]}"; do
+      label=$(regctl image config "${IMAGE}:${tag}" \
+        --platform "${platform}" \
+        --format '{{ index .Config.Labels "io.buildpacks.stack.id" }}')
+      if [ -n "${label}" ]; then
+        echo " !    ${IMAGE}:${tag} (${platform}) still has io.buildpacks.stack.id=${label}"
+        failed=1
+      else
+        echo "----> ok: ${IMAGE}:${tag} (${platform})"
+      fi
+    done
+  done
+
+  if [ "${failed}" -ne 0 ]; then
+    echo " !    Label verification failed"
+    exit 1
+  fi
+}
+
+main "$@"

@@ -2,13 +2,13 @@
 
 [![Build Status](https://github.com/gliderlabs/herokuish/workflows/CI/badge.svg)](https://github.com/gliderlabs/herokuish/actions?query=workflow%3ACI)
 [![IRC Channel](https://img.shields.io/badge/irc-%23gliderlabs-blue.svg)](https://kiwiirc.com/client/irc.freenode.net/#gliderlabs)
-[![Docker Hub](https://img.shields.io/badge/docker%20hub-v0.5.31-blue)](https://hub.docker.com/r/gliderlabs/herokuish)
+[![Docker Hub](https://img.shields.io/badge/docker%20hub-v0.11.26-blue)](https://hub.docker.com/r/gliderlabs/herokuish)
 
 A command line tool for emulating Heroku build and runtime tasks in containers.
 
 Herokuish is made for platform authors. The project consolidates and decouples Heroku compatibility logic (running buildpacks, parsing Procfile) and supporting workflow (importing/exporting slugs) from specific platform images like those in Dokku/Buildstep, Deis, Flynn, etc.
 
-The goal is to be the definitive, well maintained and heavily tested Heroku emulation utility shared by all. It is based on the [Heroku:18 and Heroku:20 system images](https://github.com/heroku/stack-images). Together they form a toolkit for achieving Heroku compatibility.
+The goal is to be the definitive, well maintained and heavily tested Heroku emulation utility shared by all. It is based on the [Heroku:24 system image](https://github.com/heroku/base-images). Together they form a toolkit for achieving Heroku compatibility.
 
 Herokuish is a community project and is in no way affiliated with Heroku.
 
@@ -19,8 +19,8 @@ Download and uncompress the latest binary tarball from [releases](https://github
 For example, you can do this directly in your Dockerfiles installing into `/bin` as one step:
 
 ```shell
-RUN curl --location --silent https://github.com/gliderlabs/herokuish/releases/download/v0.5.31/herokuish_0.5.31_linux_x86_64.tgz \
-		  | tar -xzC /bin
+RUN curl --location --silent https://github.com/gliderlabs/herokuish/releases/download/v0.11.26/herokuish_0.11.26_linux_x86_64.tgz \
+    | tar -xzC /bin
 ```
 
 Herokuish depends on Bash (4.0 or newer) and a handful of standard GNU utilties you probably have. It likely won't work on Busybox, though neither will any Heroku buildpacks.
@@ -35,6 +35,7 @@ $ herokuish
 Available commands:
   buildpack                Use and install buildpacks
     build                    Build an application using installed buildpacks
+    detect                   Detect buildpack to use for an application
     install                  Install buildpack from Git URL and optional committish
     list                     List installed buildpacks
     test                     Build and run tests for an application using installed buildpacks
@@ -60,7 +61,7 @@ For example, build processes that produce Docker images without producing interm
 `herokuish exec` will by default drop root privileges through use of [setuidgid](https://cr.yp.to/daemontools/setuidgid.html),
 but if already running as a non-root user setuidgid will fail, you can opt-out from this by setting the env-var `HEROKUISH_SETUIDGUID=false`.
 
-#### Buildpacks
+### Buildpacks
 
 Herokuish does not come with any buildpacks, but it is tested against recent versions of Heroku supported buildpacks. You can see this information with `herokuish version`. Example output:
 
@@ -78,7 +79,9 @@ buildpacks:
 
 You can install all supported buildpacks with `herokuish buildpack install`, or you can manually install buildpacks individually with `herokuish buildpack install <url> [committish]`. You can also mount a directory containing your platform's supported buildpacks (see Paths, next section), or you could bake your supported buildpacks into an image. These are the types of decisions that are up to you.
 
-#### Paths
+Buildpack scripts run as an unprivileged user. Before dropping privileges, herokuish gives that user ownership of its stdin, stdout and stderr so buildpacks can write to `/dev/stdout` and `/dev/stderr`. `/dev/null` is never chowned, and chown failures on device nodes such as ttys are ignored, so builds also work under rootless Docker.
+
+### Paths
 
 Use `herokuish paths` to see relevant system paths it uses. You can use these to import or mount data for use inside a container. They can also be overridden by setting the appropriate environment variable.
 
@@ -93,11 +96,11 @@ BUILDPACK_PATH=/tmp/buildpacks   # Path to installed buildpacks
 
 ```
 
-#### Entrypoints
+### Entrypoints
 
 Some subcommands are made to be used as default commands or entrypoint commands for containers. Specifically, herokuish detects if it was called as `/start`, `/exec`, or `/build` which will shortcut it to running those subcommands directly. This means you can either install the binary in those locations or create symlinks from those locations, allowing you to use them as your container entrypoint.
 
-#### Help
+### Help
 
 Don't be afraid of the help command. It actually tells you exactly what a command does:
 
@@ -128,10 +131,10 @@ Having trouble pushing an app to Dokku or Heroku? Use Herokuish with a local Doc
 instance to debug. This is especially helpful with Dokku to help determine if it's a buildpack
 issue or an issue with Dokku. Buildpack issues should be filed against Herokuish.
 
-#### Running an app against Herokuish
+### Running an app against Herokuish
 
 ```shell
-$ docker run --rm -v /abs/app/path:/tmp/app gliderlabs/herokuish /bin/herokuish test
+docker run --rm -v /abs/app/path:/tmp/app gliderlabs/herokuish /bin/herokuish test
 ```
 
 Mounting your local app source directory to `/tmp/app` and running `/bin/herokuish test` will run your app through the buildpack compile process. Then it starts your `web` process and attempts to connect to the web root path. If it runs into a problem, it should exit non-zero.
@@ -147,10 +150,10 @@ Mounting your local app source directory to `/tmp/app` and running `/bin/herokui
 
 You can use this output when you submit issues.
 
-#### Running an app tests using Heroku buildpacks
+### Running an app tests using Heroku buildpacks
 
 ```shell
-$ docker run --rm -v /abs/app/path:/tmp/app gliderlabs/herokuish /bin/herokuish buildpack test
+docker run --rm -v /abs/app/path:/tmp/app gliderlabs/herokuish /bin/herokuish buildpack test
 ```
 
 Mounting your local app source directory to `/tmp/app` and running `/bin/herokuish buildpack test` will run your app through the buildpack test-compile process. Then it will run `test` command to execute application tests.
@@ -167,7 +170,15 @@ Mounting your local app source directory to `/tmp/app` and running `/bin/herokui
        1 example, 0 failures
 ```
 
-#### Troubleshooting
+If you are on macOS, you'll want to explicitly set the platform:
+
+```shell
+docker run --platform linux/amd64 --rm -v /abs/app/path:/tmp/app gliderlabs/herokuish /bin/herokuish buildpack test
+```
+
+However, there is a risk of compatibility issues when running on a different platform than the one you are developing on. If you are getting strange compilation or segfaults, try running the build process on an x86 platform.
+
+## Troubleshooting
 
 If you run into an issue and looking for more insight into what `herokuish` is doing, you can set the `$TRACE` environment variable.
 
@@ -197,6 +208,28 @@ $ docker run --rm -e TRACE=true -v /abs/app/path:/tmp/app gliderlabs/herokuish /
 + exit 1
 ```
 
+You can also set a custom buildpack:
+
+```shell
+docker run -e BUILDPACK_URL="https://github.com/custom/buildpack.git#with-a-branch" -e STACK=heroku-24 -e TRACE=true --rm -v ./:/tmp/app -it gliderlabs/herokuish /bin/herokuish test
+```
+
+Note that the underlying buildpacks will not trace their commands with `TRACE=true` is enabled. They need to independently set `set -x` in order to trace execution.
+
+`BUILDPACK_URL` must be a git remote (`https://`, `git://`, `ssh://`, `git@host:path`) or a tarball URL ending in `.tgz`, `.tar.gz`, `.tbz`, `.tar.bz`, or `.tar`. If the value is malformed or the download fails, herokuish now exits non-zero with a message such as `!     Invalid buildpack URL: 'ruby'` or `!     Failed to download buildpack from '<url>'` — previously this path could stop silently.
+
+If `BUILDPACK_URL` is not set and the app's build directory contains a `.buildpacks` file with exactly one entry, herokuish treats that entry as `BUILDPACK_URL`. This bypasses `heroku-buildpack-multi` (and its "Multiple default buildpacks reported" warning) when only one buildpack is declared, since there is no real ambiguity. A `.buildpacks` file with two or more entries still goes through `heroku-buildpack-multi` as before. An explicit `BUILDPACK_URL` always wins over the file.
+
+### Entropy for `/dev/random`
+
+Workloads built on `libsodium` (used by `libzmq`, `pyzmq`, and transitively by Jupyter/`voila`) can hang on startup when the container's kernel entropy pool is not yet seeded. The runtime image ships with `rng-tools5` (which provides `rngd`) and will start it before `procfile-exec` hands off to the application when `HEROKUISH_ENTROPY=true` is set:
+
+```shell
+docker run --rm --cap-add=SYS_ADMIN -e HEROKUISH_ENTROPY=true gliderlabs/herokuish /start web
+```
+
+`rngd` needs `CAP_SYS_ADMIN` to inject entropy into `/dev/random`; without it the daemon either no-ops or logs a warning (`!     rngd failed to start`), and the application is still executed. The setting is off by default to preserve existing behavior — enable it only if you are seeing startup hangs caused by entropy starvation (see gliderlabs/herokuish#659).
+
 ## Contributing
 
 Pull requests are welcome! Herokuish is written in Bash and Go. Please conform to the [Bash styleguide](https://github.com/progrium/bashstyle) used for this project when writing Bash.
@@ -207,7 +240,7 @@ For help and discussion beyond Github Issues, join us on Freenode in `#gliderlab
 
 ## Releases
 
-Anybody can propose a release. First bump the version in `Makefile` and `Dockerfile`, make sure `CHANGELOG.md` is up to date, and make sure tests are passing. Then open a Pull Request from `master` into the `release` branch. Once a maintainer approves and merges, CircleCI will build a release and upload it to Github.
+Anybody can propose a release. First bump the version in `Makefile` and `Dockerfile`, make sure `CHANGELOG.md` is up to date, and make sure tests are passing. Then open a Pull Request from `master` into the `release` branch. Once a maintainer approves and merges, Github Actions will build a release and upload it to Github.
 
 ## Acknowledgements
 

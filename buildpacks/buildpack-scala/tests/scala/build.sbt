@@ -1,15 +1,19 @@
-import NativePackagerKeys._
+name := """scala-getting-started"""
+organization := "com.heroku"
 
-packageArchetype.java_application
+version := "1.0-SNAPSHOT"
 
-name := "hello"
+lazy val root = (project in file(".")).enablePlugins(PlayScala)
 
-version := "1.0"
+scalaVersion := "2.13.18"
 
-scalaVersion := "2.10.4"
+libraryDependencies += guice
+libraryDependencies += jdbc
+libraryDependencies += "org.scalatestplus.play" %% "scalatestplus-play" % "7.0.1" % Test
+libraryDependencies += "org.postgresql" % "postgresql" % "42.7.10"
 
-mainClass in Compile := Some("Web")
+// Adds additional packages into Twirl
+//TwirlKeys.templateImports += "com.heroku.controllers._"
 
-libraryDependencies ++= Seq(
-  "com.twitter" % "finagle-http_2.10" % "6.18.0"
-)
+// Adds additional packages into conf/routes
+// play.sbt.routes.RoutesKeys.routesImport += "com.heroku.binders._"

@@ -5,43 +5,55 @@ name: release
 on:
   push:
     tags:
-      - '*'
+      - "*"
 
 jobs:
-  build:
-    name: build
-    runs-on: ubuntu-18.04
+  release:
+    name: release
+    runs-on: ubuntu-22.04
     strategy:
-      fail-fast: true
+      fail-fast: false
+      matrix:
+        heroku:
+          - 24
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
+      - name: Get the version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF/refs\/tags\//}" >> $GITHUB_OUTPUT
+
+      - name: set up qemu
+        uses: docker/setup-qemu-action@v4
+
+      - name: set up docker buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: inspect builder
+        run: |
+          echo "Name:      ${{ steps.buildx.outputs.name }}"
+          echo "Endpoint:  ${{ steps.buildx.outputs.endpoint }}"
+          echo "Status:    ${{ steps.buildx.outputs.status }}"
+          echo "Flags:     ${{ steps.buildx.outputs.flags }}"
+          echo "Platforms: ${{ steps.buildx.outputs.platforms }}"
+
+      - name: Build herokuish (OCI layout, not pushed)
+        run: |
+          export PATH="/home/runner/go/bin:$PATH"
+          make build/docker/${{ matrix.heroku }} IMAGE_NAME="$GITHUB_REPOSITORY" BUILD_TAG=${{ steps.get_version.outputs.VERSION }} VERSION=${{ steps.get_version.outputs.VERSION }} STACK_VERSION=${{ matrix.heroku }} OCI_OUTPUT=build/oci/herokuish.tar
+
+      - name: install regctl
+        uses: regclient/actions/regctl-installer@main
+
       - name: Login to DockerHub
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v1
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Get the version
-        id: get_version
-        run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\//}
-
-      - name: Build herokuish-18
-        run: docker image build -t gliderlabs/herokuish:${{ steps.get_version.outputs.VERSION }}-18 -t gliderlabs/herokuish:latest-18 --build-arg STACK_VERSION=18 .
-
-      - name: Build herokuish-20
-        run: docker image build -t gliderlabs/herokuish:${{ steps.get_version.outputs.VERSION }}-20 -t gliderlabs/herokuish:latest-20 --build-arg STACK_VERSION=20 .
-
-      - name: Push herokuish-18
-        run: |
-          docker image push gliderlabs/herokuish:${{ steps.get_version.outputs.VERSION }}-18
-          docker image push gliderlabs/herokuish:latest-18
-
-      - name: Push herokuish-20
-        run: |
-          docker image push gliderlabs/herokuish:${{ steps.get_version.outputs.VERSION }}-20
-          docker image push gliderlabs/herokuish:latest-20
+      - name: Strip label, push, and verify
+        run: bin/retag ${{ steps.get_version.outputs.VERSION }} build/oci/herokuish.tar

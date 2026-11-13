@@ -1,8 +1,10 @@
 source 'http://rubygems.org'
-ruby '2.6.6'
+ruby '3.4.7'
 gem 'sinatra'
+gem 'puma'
 gem 'rack'
 gem 'rake'
+gem 'rackup'
 
 group :test do
   gem 'rack-test'
